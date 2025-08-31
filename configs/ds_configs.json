@@ -1,0 +1,17 @@
+{
+  "train_batch_size": 1024,
+  "train_micro_batch_size_per_gpu": 4,
+  "steps_per_print": 100,
+  "zero_optimization": {
+    "stage": 3,
+    "offload_param": {
+      "device": "cpu",
+      "pin_memory": true
+    }
+  },
+  "bf16": {
+    "enabled": true
+  },
+  "gradient_clipping": 1.0,
+  "wall_clock_breakdown": false
+}
