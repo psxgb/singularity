@@ -1,15 +1,25 @@
 {
-  "train_batch_size": 1024,
+  "train_batch_size": 32,
   "train_micro_batch_size_per_gpu": 4,
   "steps_per_print": 100,
   "zero_optimization": {
-    "stage": 3,
+    "stage": 2,
+    "offload_optimizer": {
+      "device": "none"
+    },
     "offload_param": {
-      "device": "cpu",
-      "pin_memory": true
+      "device": "none"
     }
   },
-  "bf16": {
+  "optimizer": {
+    "type": "AdamW",
+    "params": {
+      "lr": 1e-4,
+      "betas": [0.9, 0.999],
+      "eps": 1e-8
+    }
+  },
+  "fp16": {
     "enabled": true
   },
   "gradient_clipping": 1.0,

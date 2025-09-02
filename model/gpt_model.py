@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class GPTConfig:
-    def __init__(self, vocab_size, n_layer=24, n_head=16, d_model=2048, d_ff=8192, max_seq_len=2048):
+    def __init__(self, vocab_size, n_layer=3, n_head=8, d_model=256, d_ff=256, max_seq_len=256):
         self.vocab_size = vocab_size
         self.n_layer = n_layer
         self.n_head = n_head
