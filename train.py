@@ -93,7 +93,13 @@ def main():
         print("Training with DeepSpeed on device:", device)
     else:
         # Plain PyTorch path (CPU or GPU)
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if torch.backends.mps.is_available():
+            device = torch.device("mps")
+        elif torch.cuda.is_available():
+            device = torch.device("cuda")
+        else:
+            device = torch.device("cpu")
+        print("Using device:", device)
         model.to(device)
         optimizer = torch.optim.AdamW(model.parameters(), lr = learning_rate)
         model_engine = model  # alias so code below is the same
