@@ -1,5 +1,6 @@
 import os
 import torch
+import json
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 from model.gpt_model import GPTModel, GPTConfig
@@ -83,11 +84,13 @@ def main():
     
     if use_deepspeed:
         # GPU / DeepSpeed path
+        with open("configs/ds_configs.json") as f:
+            ds_config = json.load(f)
         model_engine, optimizer, _, _ = deepspeed.initialize(
             args = None,
             model = model,
             model_parameters = parameters,
-            config = "configs/ds_config.json"
+            config = ds_config
         )
         device = model_engine.device
         print("Training with DeepSpeed on device:", device)
