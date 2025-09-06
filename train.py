@@ -17,7 +17,7 @@ except ImportError:
 def evaluate(model, pad_token_id, device, seq_len, batch_size):
 
     # Load validation set
-    val_dataset = get_dataset("validation")
+    val_dataset = get_dataset("test")
     val_loader = gpt2_tokenizer(val_dataset, seq_len, batch_size, True)
 
     model.eval()  # set model to eval mode
@@ -134,6 +134,14 @@ def main():
     eval_model = model_engine if use_deepspeed else model
     pad_token_id = tokenizer.pad_token_id
     evaluate(eval_model, pad_token_id, device, max_seq_len, batch_size)
+
+    # Save model and tokenizer
+    save_dir = "saved_model"
+    os.makedirs(save_dir, exist_ok=True)
+    torch.save(model.state_dict(), os.path.join(save_dir, "gpt_model.pt"))
+    torch.save(config.__dict__, os.path.join(save_dir, "gpt_config.pt"))  # save config
+    tokenizer.save_pretrained(save_dir)  # Hugging Face tokenizer save
+    print(f"Model and tokenizer saved to {save_dir}")
 
 if __name__ == "__main__":
     main()

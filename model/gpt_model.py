@@ -40,10 +40,14 @@ class TransformerBlock(nn.Module):
             nn.GELU(),
             nn.Linear(config.d_ff, config.d_model)
         )
+        mask = torch.triu(torch.ones(config.max_seq_len, config.max_seq_len), diagonal=1)
+        mask = mask.masked_fill(mask == 1, float("-inf"))
+        self.register_buffer("causal_mask", mask)
 
     def forward(self, x):
         h = self.ln1(x)
-        attn_out, _ = self.attn(h, h, h, need_weights=False)
+        T = h.size(1)
+        attn_out, _ = self.attn(h, h, h, attn_mask=self.causal_mask[:T, :T], need_weights=False)
         x = x + attn_out
         h = self.ln2(x)
         x = x + self.mlp(h)
