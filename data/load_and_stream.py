@@ -18,12 +18,16 @@ def load_and_stream(dset_spec, tokenizer, seq_len, batch_size, english_only, min
     name = dset_spec["name"]
     config = dset_spec.get("config", None)
     split = dset_spec.get("split", "train")
+    filter_name = dset_spec.get("filter_name", [])
+    filter_value = dset_spec.get("filter_value", "")
 
     # Load dataset in streaming mode
     if config:
-        ds = load_dataset(name, config, split=split, streaming=True)
+        ds = load_dataset(name, config, split = split, streaming = True)
     else:
-        ds = load_dataset(name, split=split, streaming=True)
+        ds = load_dataset(name, split = split, streaming = True)
+    
+    ds = ds.shuffle(buffer_size=10000).repeat(1)
 
     # Ensure pad token exists
     if tokenizer.pad_token is None:
@@ -40,6 +44,13 @@ def load_and_stream(dset_spec, tokenizer, seq_len, batch_size, english_only, min
             continue
         # Minimum length filter
         if len(text.split()) < min_length:
+            continue
+        #category filter
+        if len(filter_name) == 1 and ex.get(filter_name[0]) != filter_value:
+            continue
+        if len(filter_name) == 2 and ex.get(filter_name[0]).get(filter_name[1]) != filter_value:
+            continue
+        if len(filter_name) == 3 and ex.get(filter_name[0]).get(filter_name[1]).get(filter_name[2]) != filter_value:
             continue
         # Tokenize
         toks = tokenizer.encode(text, add_special_tokens=False)

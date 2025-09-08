@@ -30,12 +30,9 @@
   },
   "data": {
     "datasets": [
-      {"name": "wikitext", "config": "wikitext-103-raw-v1", "split": "train"},
-      {"name": "allenai/c4", "config": "en", "split": "train[:1%]"},
-      {"name": "arxiv", "config": "cs", "split": "train"},
-      {"name": "github-code", "config": "python", "split": "train"},
-      {"name": "huggingface/forum", "config": "", "split": "train"},
-      {"name": "stackoverflow", "config": "ml", "split": "train"}
+      {"name": "wikitext", "config": "wikitext-103-raw-v1", "weight": 0.01, "split": "train"},
+      {"name": "allenai/c4", "config": "en", "weight": 0.79, "split": "train"},
+      {"name": "multilingual-mi-llm/pile", "split": "train", "weight": 0.2, "filter_name": ["meta","pile_set_name"], "filter_value": "ArXiv"}
     ],
     "english_only": true,
     "min_length": 20,

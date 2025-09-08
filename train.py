@@ -2,13 +2,14 @@ import deepspeed
 import torch
 from utils.get_args import get_args
 from utils.get_configs import get_configs
+from utils.get_ds_configs import generate_ds_config
 from utils.tokenizer import get_tokenizer
 from utils.set_seed import set_seed
 from model.gpt_model import get_model_config, GPTModel
 from data.load_and_stream import load_and_stream
 from transformers import get_cosine_schedule_with_warmup
 from torch.optim import AdamW
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 from pathlib import Path
 
 
@@ -18,26 +19,25 @@ def main():
     args = get_args()
     cfg = get_configs(args.task_name)
     set_seed(cfg["training"]['seed'])
+    ds_cfg = generate_ds_config(cfg)
 
     #get tokenizer
     tokenizer = get_tokenizer("gpt2")
     vocab_size = len(tokenizer)
 
     #build model config
-    model_cfg = get_model_config(cfg)
+    model_cfg = get_model_config(cfg, vocab_size)
     model = GPTModel(model_cfg)
 
-    # Optimizer and device handling
-    # parameters = filter(lambda p: p.requires_grad, model.parameters())
-    # model_engine, optimizer, _, _ = deepspeed.initialize(
-    #     args=None, model=model, model_parameters=parameters, config=ds_cfg
-    # )
-    # device = model_engine.device
-    # print("Training with DeepSpeed on device:", device)
-    device = torch.device("mps")
-    model.to(device)
-    optimizer = AdamW(model.parameters(), lr = 3e-4, weight_decay = 0.1)
-    model_engine = model
+    #optimizer and device handling
+    parameters = filter(lambda p: p.requires_grad, model.parameters())
+    model_engine, optimizer, _, _ = deepspeed.initialize(args = None, model = model, model_parameters = parameters, config = ds_cfg)
+    device = model_engine.device
+    print("Training with DeepSpeed on device:", device)
+    # device = torch.device("mps")
+    # model.to(device)
+    # optimizer = AdamW(model.parameters(), lr = 3e-4, weight_decay = 0.1)
+    # model_engine = model
 
     #decide scaler
     enable_scaler = cfg["training"]['fp16'] and device.type == "cuda"
@@ -51,43 +51,59 @@ def main():
     total_steps = 0
     model.train()
     try:
-        for epoch in range(cfg["training"]['n_epochs']):
-            for dspec in cfg["data"]["datasets"]:
-                stream = load_and_stream(dspec, tokenizer, cfg["model"]["max_seq_len"], cfg["training"]["batch_size"], 
-                    cfg["data"]['english_only'], cfg["data"]['min_length'])
-                for batch in stream:
-                    input_ids = batch.to(device)
-                    with autocast(enabled = enable_scaler):
-                        logits = model_engine(input_ids)
-                        shift_logits = logits[:, :-1, :].contiguous()
-                        shift_labels = input_ids[:, 1:].contiguous()
-                        loss_fct = torch.nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
-                        loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-                        loss = loss / cfg["training"]['gradient_accumulation_steps']
-                        scaler.scale(loss).backward()
-                        if total_steps % cfg["training"]['gradient_accumulation_steps'] == 0:
-                            scaler.unscale_(optimizer)
-                            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg["training"]['max_grad_norm'])
-                            scaler.step(optimizer)
-                            scaler.update()
-                            scheduler.step()
-                            optimizer.zero_grad()
-                        total_steps += 1
+        for dspec in cfg["data"]["datasets"]:
+            print(dspec["name"])
+            stream = load_and_stream(dspec, tokenizer, cfg["model"]["max_seq_len"], cfg["training"]["batch_size"], 
+                cfg["data"]['english_only'], cfg["data"]['min_length'])
+            # Initialize past_key_values for streaming
+            past_key_values = [None] * model_cfg.n_layer
+            # chunk_counter = 0
+            step_within_this_data = 0
+            for batch in stream:
+                input_ids = batch
+                if input_ids.dim() == 1:
+                    input_ids = input_ids.unsqueeze(0)  # [1, T]
+                input_ids = input_ids.to(device)
+                with autocast(device_type = device.type, enabled = enable_scaler):
+                    logits, new_past_key_values = model_engine(input_ids, past_key_values)
+                    past_key_values = [
+                        (k.detach(), v.detach()) if k is not None else None
+                        for k, v in new_past_key_values
+                    ]
+                    # chunk_counter += 1
+                    # if chunk_counter % 5 == 0:
+                    #     past_key_values = [None] * model_cfg.n_layer
+                    shift_logits = logits[:, :-1, :].contiguous()
+                    shift_labels = input_ids[:, 1:].contiguous()
+                    loss_fct = torch.nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
+                    loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+                    loss = loss / cfg["training"]['gradient_accumulation_steps']
+                    scaler.scale(loss).backward()
+                    if total_steps % cfg["training"]['gradient_accumulation_steps'] == 0:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), cfg["training"]['max_grad_norm'])
+                        scaler.step(optimizer)
+                        scaler.update()
+                        scheduler.step()
+                        optimizer.zero_grad()
+                    total_steps += 1
+                    step_within_this_data += 1
+                if total_steps % cfg["training"]['save_every_steps'] == 0:
+                    #report loss
                     print(f"Step {total_steps} Loss {loss.item():.4f}")
-                    if total_steps % cfg["training"]['save_every_steps'] == 0:
-                        #report loss
-                        print(f"Step {total_steps} Loss {loss.item():.4f}")
-                        #save checkpoint
-                        save_dir = Path(cfg["training"]['save_dir'])
-                        save_dir.mkdir(parents=True, exist_ok=True)
-                        checkpoint = {
-                            "model_state_dict": model.state_dict(),
-                            "optimizer_state_dict": optimizer.state_dict(),
-                            "scheduler_state_dict": scheduler.state_dict(),
-                            "step": total_steps
-                        }
-                        torch.save(checkpoint, save_dir / f"{cfg['model_name']}_step{total_steps}.pt")
-                        tokenizer.save_pretrained(save_dir)
+                    #save checkpoint
+                    save_dir = Path(cfg["training"]['save_dir'])
+                    save_dir.mkdir(parents=True, exist_ok=True)
+                    checkpoint = {
+                        "model_state_dict": model.state_dict(),
+                        "optimizer_state_dict": optimizer.state_dict(),
+                        "scheduler_state_dict": scheduler.state_dict(),
+                        "step": total_steps
+                    }
+                    torch.save(checkpoint, save_dir / f"{cfg['model_name']}_step{total_steps}.pt")
+                    tokenizer.save_pretrained(save_dir)
+                if step_within_this_data >= nsteps * dspec["weight"]:
+                    break
     except KeyboardInterrupt:
         print("Training interrupted. Saving checkpoint...")
 

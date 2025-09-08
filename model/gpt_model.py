@@ -4,6 +4,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# -------------------------------
+# Config
+# -------------------------------
 @dataclass
 class GPTConfig:
     vocab_size: int
@@ -30,7 +33,7 @@ class RotaryEmbedding(nn.Module):
         t = torch.arange(seq_len, device=device).type_as(self.inv_freq)
         freqs = torch.einsum("i,j->ij", t, self.inv_freq)
         emb = torch.cat((freqs, freqs), dim=-1)
-        return emb
+        return emb  # [T, head_dim]
 
 # -------------------------------
 # Multi-Head Attention with RoPE
@@ -39,60 +42,71 @@ class MultiHeadAttention(nn.Module):
     def __init__(self, cfg: GPTConfig):
         super().__init__()
         self.cfg = cfg
+        self.n_head = cfg.n_head
         self.head_dim = cfg.d_model // cfg.n_head
         assert cfg.d_model % cfg.n_head == 0, "d_model must be divisible by n_head"
 
         self.qkv = nn.Linear(cfg.d_model, cfg.d_model * 3, bias=False)
         self.out = nn.Linear(cfg.d_model, cfg.d_model, bias=False)
         self.dropout = nn.Dropout(cfg.dropout)
-
         self.rope = RotaryEmbedding(self.head_dim) if cfg.use_rope else None
 
     def _apply_rope(self, x, rope_emb):
         # x: [B, T, n_head, head_dim]
-        # rope_emb: [T, head_dim]
-        cos = rope_emb.cos().unsqueeze(1).unsqueeze(0)
-        sin = rope_emb.sin().unsqueeze(1).unsqueeze(0)
-        x1, x2 = x[..., ::2], x[..., 1::2]
-        x_rot = torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
+        B, T, n_head, head_dim = x.shape
+        x1 = x[..., ::2]
+        x2 = x[..., 1::2]
+        cos = rope_emb[:, ::2].unsqueeze(0).unsqueeze(2)
+        sin = rope_emb[:, 1::2].unsqueeze(0).unsqueeze(2)
+        x_rot = torch.empty_like(x)
+        x_rot[..., ::2] = x1 * cos - x2 * sin
+        x_rot[..., 1::2] = x1 * sin + x2 * cos
         return x_rot
 
     def forward(self, x, attn_mask=None, past_kv=None):
         B, T, C = x.size()
-        qkv = self.qkv(x)  # [B, T, 3*C]
+        qkv = self.qkv(x)
         q, k, v = qkv.split(C, dim=2)
-        q = q.view(B, T, self.cfg.n_head, self.head_dim)
-        k = k.view(B, T, self.cfg.n_head, self.head_dim)
-        v = v.view(B, T, self.cfg.n_head, self.head_dim)
 
-        # Apply RoPE
+        # reshape to [B, T, n_head, head_dim]
+        q = q.view(B, T, self.n_head, self.head_dim)
+        k = k.view(B, T, self.n_head, self.head_dim)
+        v = v.view(B, T, self.n_head, self.head_dim)
+
+        # Apply RoPE if enabled
         if self.rope is not None:
-            rope_emb = self.rope(T, x.device)
+            rope_emb = self.rope(T, x.device)  # [T, head_dim]
             q = self._apply_rope(q, rope_emb)
             k = self._apply_rope(k, rope_emb)
 
-        # Concatenate past k/v for streaming
-        if past_kv is not None:
-            past_k, past_v = past_kv  # [B, n_head, Tp, head_dim]
-            k = torch.cat([past_k, k.transpose(1,2)], dim=2)
-            v = torch.cat([past_v, v.transpose(1,2)], dim=2)
-        k_t = k.transpose(1,2)  # [B, n_head, T_total, head_dim]
-        v_t = v.transpose(1,2)
+        # Transpose to [B, n_head, T, head_dim] for attention
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
 
-        att = torch.matmul(q.transpose(1,2), k_t.transpose(-2,-1)) / math.sqrt(self.head_dim)
+        # Concatenate past key/value along sequence dimension
+        if past_kv is not None:
+            past_k, past_v = past_kv
+            if past_k is not None:
+                k = torch.cat([past_k, k], dim=2)  # concat along sequence
+                v = torch.cat([past_v, v], dim=2)
+
+        # Attention
+        k_t = k.transpose(-2, -1)  # [B, n_head, head_dim, Tp+T]
+        att = torch.matmul(q, k_t) / math.sqrt(self.head_dim)
         if attn_mask is not None:
             att = att.masked_fill(attn_mask == 0, float('-inf'))
         att = F.softmax(att, dim=-1)
         att = self.dropout(att)
 
-        out = torch.matmul(att, v_t)  # [B, n_head, T, head_dim]
-        out = out.transpose(1,2).contiguous().view(B, T, C)
+        out = torch.matmul(att, v)  # [B, n_head, T, head_dim]
+        out = out.transpose(1, 2).contiguous().view(B, T, C)
         out = self.out(out)
         out = self.dropout(out)
 
-        # Return new key/values for caching
-        new_kv = (k_t, v_t)
-        return out, new_kv
+        # Return new past key/value
+        new_past_kv = (k, v)
+        return out, new_past_kv
 
 # -------------------------------
 # FeedForward
@@ -159,47 +173,60 @@ class GPTModel(nn.Module):
         elif isinstance(module, nn.Embedding):
             nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
+    # -------------------------------
+    # Causal mask for autoregressive attention
+    # -------------------------------
     def _causal_mask(self, T, device, past_len=0):
         total_len = past_len + T
         mask = torch.tril(torch.ones((total_len, total_len), device=device)).unsqueeze(0).unsqueeze(0)
         if past_len > 0:
-            mask = mask[:, :, past_len:, :]  # Only last token attends to all previous
-        return mask
+            mask = mask[:, :, past_len:, :]
+        return mask  # [1,1,T,total_len]
 
-    def forward(self, input_ids, past_key_values=None):
+    # -------------------------------
+    # Forward
+    # -------------------------------
+    def forward(self, input_ids, past_key_values=None, attn_mask=None):
         B, T = input_ids.size()
-        assert T <= self.cfg.max_seq_len, "Sequence length exceeds model max_seq_len"
 
-        token_embeddings = self.tok_emb(input_ids)
-        pos_embeddings = self.pos_emb[:, :T, :]
-        x = token_embeddings + pos_embeddings
+        # Determine past length
+        past_len = 0
+        if past_key_values is not None:
+            for kv in past_key_values:
+                if kv is not None:
+                    past_len = kv[0].size(2)  # kv[0] is key [B, n_head, Tp, head_dim]
+                    break
+
+        # causal mask
+        if attn_mask is None:
+            attn_mask = self._causal_mask(T, input_ids.device, past_len=past_len)
+
+        x = self.tok_emb(input_ids) + self.pos_emb[:, :T, :]
         x = self.drop(x)
-
-        if past_key_values is None:
-            past_key_values = [None] * self.cfg.n_layer
 
         new_past_key_values = []
         for i, block in enumerate(self.blocks):
-            x, new_kv = block(x, attn_mask=self._causal_mask(T, x.device,
-                                        past_len=0 if past_key_values[i] is None else past_key_values[i][0].size(2)),
-                               past_kv=past_key_values[i])
+            kv = past_key_values[i] if past_key_values is not None else None
+            x, new_kv = block(x, attn_mask=attn_mask, past_kv=kv)
             new_past_key_values.append(new_kv)
 
         x = self.ln_f(x)
         logits = self.head(x)
         return logits, new_past_key_values
 
-
-def get_model_config(cfg):
+# -------------------------------
+# Utility to create model config
+# -------------------------------
+def get_model_config(cfg, vocab_size):
     model_config = GPTConfig(
-        vocab_size = vocab_size,
-        n_layer = cfg["model"]["n_layer"],
-        n_head = cfg["model"]["n_head"],
-        d_model = cfg["model"]["d_model"],
-        d_ff = cfg["model"]["d_ff"],
-        max_seq_len = cfg["model"]["max_seq_len"],
-        dropout = cfg["model"]['dropout'],
-        tie_word_embeddings = cfg["model"]['tie_word_embeddings'],
-        use_rope = cfg["model"]['use_rope'],
+        vocab_size=vocab_size,
+        n_layer=cfg["model"]["n_layer"],
+        n_head=cfg["model"]["n_head"],
+        d_model=cfg["model"]["d_model"],
+        d_ff=cfg["model"]["d_ff"],
+        max_seq_len=cfg["model"]["max_seq_len"],
+        dropout=cfg["model"]['dropout'],
+        tie_word_embeddings=cfg["model"]['tie_word_embeddings'],
+        use_rope=cfg["model"]['use_rope'],
     )
     return model_config
