@@ -52,7 +52,6 @@ def main():
     model.train()
     try:
         for dspec in cfg["data"]["datasets"]:
-            print(dspec["name"])
             stream = load_and_stream(dspec, tokenizer, cfg["model"]["max_seq_len"], cfg["training"]["batch_size"], 
                 cfg["data"]['english_only'], cfg["data"]['min_length'])
             # Initialize past_key_values for streaming
@@ -88,9 +87,10 @@ def main():
                         optimizer.zero_grad()
                     total_steps += 1
                     step_within_this_data += 1
-                if total_steps % cfg["training"]['save_every_steps'] == 0:
+                if total_steps % 1000 == 0:
                     #report loss
                     print(f"Step {total_steps} Loss {loss.item():.4f}")
+                if total_steps % cfg["training"]['save_every_steps'] == 0:
                     #save checkpoint
                     save_dir = Path(cfg["training"]['save_dir'])
                     save_dir.mkdir(parents=True, exist_ok=True)
