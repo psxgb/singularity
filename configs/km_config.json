@@ -4,23 +4,18 @@
     "n_head": 16,
     "d_model": 2048,
     "d_ff": 8192,
-    "vocab_size": null,
     "max_seq_len": 1024,
     "dropout": 0.1,
     "tie_word_embeddings": true,
     "use_rope": true
   },
   "training": {
-    "batch_size": 16,
-    "micro_batch_size": 16,
-    "gradient_accumulation_steps": 1,
-    "n_epochs": 1,
+    "train_batch_size": 16,
     "total_tokens_target": 40000000000,
     "learning_rate": 3e-4,
     "betas": [0.9, 0.95],
     "weight_decay": 0.1,
     "warmup": 2000,
-    "lr_scheduler": "cosine",
     "max_grad_norm": 1.0,
     "seed": 1,
     "fp16": true,
@@ -35,8 +30,7 @@
       {"name": "multilingual-mi-llm/pile", "split": "train", "weight": 0.2, "filter_name": ["meta","pile_set_name"], "filter_value": "ArXiv"}
     ],
     "english_only": true,
-    "min_length": 20,
-    "shuffle_buffer": 10000
+    "min_length": 20
   },
   "model_name": "llm_expert_3B"
 }
