@@ -29,7 +29,7 @@ def main():
     #use cuda and scaler
     device = torch.device("cuda")
     model.to(device)
-    optimizer = AdamW(model.parameters(), lr = 3e-4, weight_decay = 0.1)
+    optimizer = AdamW(model.parameters(), lr = cfg["training"]["learning_rate"], weight_decay = cfg["training"]["weight_decay"])
     model_engine = model
     scaler = GradScaler(enabled = False)
 
