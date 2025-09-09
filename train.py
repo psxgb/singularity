@@ -47,7 +47,6 @@ def main():
                 cfg["data"]['english_only'], cfg["data"]['min_length'])
             # Initialize past_key_values for streaming
             past_key_values = [None] * model_cfg.n_layer
-            chunk_counter = 0
             step_within_this_data = 0
             for batch in stream:
                 input_ids = batch
@@ -60,9 +59,10 @@ def main():
                         (k.detach(), v.detach()) if k is not None else None
                         for k, v in new_past_key_values
                     ]
-                    # chunk_counter += 1
-                    if chunk_counter % 5 == 0:
-                        past_key_values = [None] * model_cfg.n_layer
+                    past_key_values = [
+                        (k[:, :, -cfg["model"]["max_seq_len"]:], v[:, :, -cfg["model"]["max_seq_len"]:]) if k is not None else None
+                        for k, v in past_key_values
+                    ]
                     shift_logits = logits[:, :-1, :].contiguous()
                     shift_labels = input_ids[:, 1:].contiguous()
                     loss_fct = torch.nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
@@ -76,18 +76,17 @@ def main():
                     optimizer.zero_grad()
                     total_steps += 1
                     step_within_this_data += 1
-                if total_steps % 100 == 0:
-                    #report loss
+                if total_steps % 1000 == 0:
                     print(f"Step {total_steps} Loss {loss.item():.4f}")
                 if total_steps % cfg["training"]['save_every_steps'] == 0:
-                    #save checkpoint
                     save_dir = Path(cfg["training"]['save_dir'])
                     save_dir.mkdir(parents=True, exist_ok=True)
                     checkpoint = {
                         "model_state_dict": model.state_dict(),
                         "optimizer_state_dict": optimizer.state_dict(),
                         "scheduler_state_dict": scheduler.state_dict(),
-                        "step": total_steps
+                        "step": total_steps,
+                        "loss": loss.item()
                     }
                     torch.save(checkpoint, save_dir / f"{cfg['model_name']}_step{total_steps}.pt")
                     tokenizer.save_pretrained(save_dir)
@@ -103,7 +102,8 @@ def main():
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "scheduler_state_dict": scheduler.state_dict(),
-        "step": total_steps
+        "step": total_steps,
+        "loss": loss.item()
     }
     torch.save(checkpoint, save_dir / f"{cfg['model_name']}_final.pt")
     tokenizer.save_pretrained(save_dir)

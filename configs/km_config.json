@@ -1,9 +1,9 @@
 {
   "model": {
-    "n_layer": 12,
-    "n_head": 16,
-    "d_model": 2048,
-    "d_ff": 8192,
+    "n_layer": 6,
+    "n_head": 8,
+    "d_model": 512,
+    "d_ff": 2048,
     "vocab_size": null,
     "max_seq_len": 1024,
     "dropout": 0.1,
@@ -33,5 +33,5 @@
     "english_only": true,
     "min_length": 20
   },
-  "model_name": "llm_expert_3B"
+  "model_name": "arxiv_expert"
 }
