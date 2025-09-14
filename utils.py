@@ -4,13 +4,14 @@ import random
 import torch
 from datasets import load_dataset
 from transformers import AutoTokenizer
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, IterableDataset
 from dataclasses import dataclass
+import itertools
 
 #get arguments from cmd
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--task_name", type = str, required=  True)
+    parser.add_argument("--task_name", type = str, required = True)
     parser.add_argument("--local_rank", type = int, default = 0)
     args = parser.parse_args()
     return args
@@ -28,30 +29,62 @@ def set_seed(seed):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-#load data
-def get_dataset(split):
-    ds = load_dataset("wikitext", "wikitext-103-raw-v1", split=split)
-    return ds
+# streaming dataset wrapper
+class StreamingTextDataset(IterableDataset):
+    def __init__(self, ds, tokenizer, seq_len, min_length, english_only, filter_name, filter_value):
+        self.ds = ds
+        self.tokenizer = tokenizer
+        self.seq_len = seq_len
+        self.min_length = min_length
+        self.english_only = english_only
+        self.filter_name = filter_name
+        self.filter_value = filter_value
+    def __iter__(self):
+        # cycle indefinitely so that each epoch has data
+        for example in itertools.cycle(self.ds):
+            para = example.get("text") or example.get("content") or example.get("article") or ""
+            if not para or len(para.split()) < self.min_length:
+                continue
+            #english_only heuristic
+            if self.english_only and sum(1 for c in para if ord(c) > 127) > len(para) * 0.3:
+                continue
+            filter_name = self.filter_name
+            filter_value = self.filter_value
+            if len(filter_name) == 1 and example.get(filter_name[0]) != filter_value:
+                continue
+            if len(filter_name) == 2 and example.get(filter_name[0]).get(filter_name[1]) != filter_value:
+                continue
+            if len(filter_name) == 3 and example.get(filter_name[0]).get(filter_name[1]).get(filter_name[2]) != filter_value:
+                continue 
+            tokens = self.tokenizer.encode(para)
+            for i in range(0, len(tokens), self.seq_len):
+                chunk = tokens[i:i+self.seq_len]
+                if len(chunk) < self.seq_len:
+                    chunk += [self.tokenizer.pad_token_id] * (self.seq_len - len(chunk))
+                yield (torch.tensor(chunk, dtype=torch.long),)
 
-#create tokenizer
-def gpt2_tokenizer(ds, seq_len, batch_size, ignore_tokenizer = False):
-    tokenizer = AutoTokenizer.from_pretrained("gpt2")
-    if tokenizer.pad_token is None: tokenizer.add_special_tokens({"pad_token": "[PAD]"})
-    all_chunks = []
-    for para in ds["text"]:
-        tokens = tokenizer.encode(para)
-        for i in range(0, len(tokens), seq_len):
-            chunk = tokens[i:i+seq_len]
-            # pad last chunk if needed
-            if len(chunk) < seq_len:
-                chunk += [tokenizer.pad_token_id] * (seq_len - len(chunk))
-            all_chunks.append(chunk)
-    dataset = TensorDataset(torch.tensor(all_chunks))
-    loader = DataLoader(dataset, batch_size = batch_size, shuffle = False)
-    if ignore_tokenizer:
-        return loader
+#load data (streaming)
+def get_dataset(data, tokenizer, batch_size, seq_len, min_length, english_only):
+    if 'config' in data:
+        ds = load_dataset(data["name"], data["config"], split = "train", streaming = True).shuffle(buffer_size = 10000)
     else:
-        return tokenizer, loader
+        ds = load_dataset(data["name"], split = "train", streaming = True).shuffle(buffer_size = 10000)
+    if 'filter_name' in data:
+        filter_name = data['filter_name']
+        filter_value = data['filter_value']
+    else:
+        filter_name = []
+        filter_value = ''
+    dataset = StreamingTextDataset(ds, tokenizer, seq_len, min_length, english_only, filter_name, filter_value)
+    loader = DataLoader(dataset, batch_size = batch_size)
+    return loader
+
+#create tokenizer + dataloader
+def gpt2_tokenizer():
+    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    if tokenizer.pad_token is None:
+        tokenizer.add_special_tokens({"pad_token": "[PAD]"})
+    return tokenizer
 
 #generate model config
 @dataclass

@@ -1,11 +1,11 @@
 {
   "model": {
-    "n_layer": 3,
+    "n_layer": 6,
     "n_head": 8,
-    "d_model": 256,
-    "d_ff": 256,
+    "d_model": 512,
+    "d_ff": 2048,
     "vocab_size": null,
-    "max_seq_len": 256,
+    "max_seq_len": 1024,
     "dropout": 0.0,
     "tie_word_embeddings": false,
     "use_rope": false
@@ -21,14 +21,13 @@
     "seed": 1,
     "fp16": true,
     "save_dir": "saved_model",
-    "save_every_steps": 100000,
     "optimizer_type": "AdamW"
   },
   "data": {
     "datasets": [
-      {"name": "wikitext", "config": "wikitext-103-raw-v1", "weight": 1.0, "split": "train"},
-      {"name": "allenai/c4", "config": "en", "weight": 0.0, "split": "train"},
-      {"name": "multilingual-mi-llm/pile", "split": "train", "weight": 0.0, "filter_name": ["meta","pile_set_name"], "filter_value": "ArXiv"}
+      {"name": "wikitext", "config": "wikitext-103-raw-v1", "weight": 0.01, "split": "train"},
+      {"name": "allenai/c4", "config": "en", "weight": 0.79, "split": "train"},
+      {"name": "multilingual-mi-llm/pile", "split": "train", "weight": 0.2, "filter_name": ["meta","pile_set_name"], "filter_value": "ArXiv"}
     ],
     "english_only": true,
     "min_length": 20

@@ -2,6 +2,8 @@ import deepspeed
 import torch
 from utils import get_args, get_configs, set_seed, get_dataset, gpt2_tokenizer, get_model_config
 from model import GPTModel
+from pathlib import Path
+
 
 def main():
 
@@ -9,9 +11,9 @@ def main():
     args = get_args()
     cfg = get_configs(args.task_name)
     set_seed(cfg["training"]['seed'])
-    train_dataset = get_dataset("train")
-    tokenizer, train_loader = gpt2_tokenizer(train_dataset, cfg["model"]["max_seq_len"], cfg["training"]["train_batch_size"])
+    tokenizer = gpt2_tokenizer()
     vocab_size = len(tokenizer)
+    print(vocab_size)
     model_cfg = get_model_config(cfg, vocab_size)
 
     #initialize model
@@ -19,15 +21,20 @@ def main():
     model.tok_emb = torch.nn.Embedding(vocab_size, cfg["model"]["d_model"])
     model.head = torch.nn.Linear(cfg["model"]["d_model"], vocab_size, bias = False)
     parameters = filter(lambda p: p.requires_grad, model.parameters())
-    device = torch.device("mps")
+    device = torch.device("cuda")
     model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr = cfg["training"]["learning_rate"])
     model_engine = model
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index = tokenizer.pad_token_id)
 
     #model training
-    for epoch in range(3):
-        for step, batch in enumerate(train_loader):
+    total_step = int(cfg["training"]["total_tokens_target"] / cfg["training"]["train_batch_size"] / cfg["model"]["max_seq_len"])
+    for data in cfg["data"]["datasets"]:
+        print(data["name"])
+        train_loader = get_dataset(data, tokenizer, cfg["training"]["train_batch_size"], cfg["model"]["max_seq_len"], 
+                                   cfg["data"]["min_length"], cfg["data"]["english_only"])
+        step = 0
+        for batch in train_loader:
             input_ids = batch[0].to(device)
             outputs = model_engine(input_ids)
             shift_logits = outputs[:, :-1].contiguous()
@@ -36,8 +43,22 @@ def main():
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            if step % 100 == 0:
-                print(f"Epoch {epoch} Step {step} Loss {loss.item()}")
+            step += 1
+            if step >= total_step * data["weight"]:
+                break
+
+    #save model
+    save_dir = Path(cfg["training"]['save_dir'])
+    save_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint = {
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "step": total_step,
+        "loss": loss.item()
+    }
+    torch.save(checkpoint, save_dir / f"{cfg['model_name']}_v0.pt")
+    tokenizer.save_pretrained(save_dir)
+
 
 if __name__ == "__main__":
     main()
