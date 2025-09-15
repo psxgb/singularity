@@ -1,11 +1,11 @@
 {
   "model": {
-    "n_layer": 6,
+    "n_layer": 3,
     "n_head": 8,
-    "d_model": 512,
-    "d_ff": 2048,
+    "d_model": 256,
+    "d_ff": 256,
     "vocab_size": null,
-    "max_seq_len": 1024,
+    "max_seq_len": 256,
     "dropout": 0.0,
     "tie_word_embeddings": false,
     "use_rope": false
@@ -32,5 +32,5 @@
     "english_only": true,
     "min_length": 20
   },
-  "model_name": "arxiv_expert"
+  "model_name": "arxiv_expert_v0"
 }

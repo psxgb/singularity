@@ -1,6 +1,6 @@
 import deepspeed
 import torch
-from utils import get_args, get_configs, set_seed, get_dataset, gpt2_tokenizer, get_model_config
+from utils import get_configs, set_seed, get_dataset, gpt2_tokenizer, get_model_config
 from model import GPTModel
 from pathlib import Path
 
@@ -8,12 +8,10 @@ from pathlib import Path
 def main():
 
     #pre-modeling steps
-    args = get_args()
-    cfg = get_configs(args.task_name)
-    set_seed(cfg["training"]['seed'])
+    cfg = get_configs()
+    set_seed()
     tokenizer = gpt2_tokenizer()
     vocab_size = len(tokenizer)
-    print(vocab_size)
     model_cfg = get_model_config(cfg, vocab_size)
 
     #initialize model
@@ -21,7 +19,7 @@ def main():
     model.tok_emb = torch.nn.Embedding(vocab_size, cfg["model"]["d_model"])
     model.head = torch.nn.Linear(cfg["model"]["d_model"], vocab_size, bias = False)
     parameters = filter(lambda p: p.requires_grad, model.parameters())
-    device = torch.device("cuda")
+    device = torch.device("mps")
     model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr = cfg["training"]["learning_rate"])
     model_engine = model
@@ -44,7 +42,8 @@ def main():
             loss.backward()
             optimizer.step()
             step += 1
-            if step >= total_step * data["weight"]:
+            print(f"Step {step} Loss {loss.item():.4f}")
+            if step >= 3:
                 break
 
     #save model
@@ -56,7 +55,7 @@ def main():
         "step": total_step,
         "loss": loss.item()
     }
-    torch.save(checkpoint, save_dir / f"{cfg['model_name']}_v0.pt")
+    torch.save(checkpoint, save_dir / f"{cfg['model_name']}.pt")
     tokenizer.save_pretrained(save_dir)
 
 

@@ -8,26 +8,18 @@ from torch.utils.data import DataLoader, IterableDataset
 from dataclasses import dataclass
 import itertools
 
-#get arguments from cmd
-def get_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--task_name", type = str, required = True)
-    parser.add_argument("--local_rank", type = int, default = 0)
-    args = parser.parse_args()
-    return args
-
 #load config
-def get_configs(task_name):
-    with open(f"configs/{task_name}_config.json") as f:
+def get_configs():
+    with open(f"config.json") as f:
         config = json.load(f)
         return config
 
 #set random seed
-def set_seed(seed):
-    random.seed(seed)
-    torch.manual_seed(seed)
+def set_seed():
+    random.seed(0)
+    torch.manual_seed(0)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+        torch.cuda.manual_seed_all(0)
 
 # streaming dataset wrapper
 class StreamingTextDataset(IterableDataset):
@@ -65,10 +57,13 @@ class StreamingTextDataset(IterableDataset):
 
 #load data (streaming)
 def get_dataset(data, tokenizer, batch_size, seq_len, min_length, english_only):
+    generator = torch.Generator()
+    generator.manual_seed(0)
+
     if 'config' in data:
-        ds = load_dataset(data["name"], data["config"], split = "train", streaming = True).shuffle(buffer_size = 10000)
+        ds = load_dataset(data["name"], data["config"], split = "train", streaming = True).shuffle(buffer_size = 10000, seed = 0)
     else:
-        ds = load_dataset(data["name"], split = "train", streaming = True).shuffle(buffer_size = 10000)
+        ds = load_dataset(data["name"], split = "train", streaming = True).shuffle(buffer_size = 10000, seed = 0)
     if 'filter_name' in data:
         filter_name = data['filter_name']
         filter_value = data['filter_value']
@@ -76,7 +71,7 @@ def get_dataset(data, tokenizer, batch_size, seq_len, min_length, english_only):
         filter_name = []
         filter_value = ''
     dataset = StreamingTextDataset(ds, tokenizer, seq_len, min_length, english_only, filter_name, filter_value)
-    loader = DataLoader(dataset, batch_size = batch_size)
+    loader = DataLoader(dataset, batch_size = batch_size, shuffle = False, num_workers = 0, generator = generator)
     return loader
 
 #create tokenizer + dataloader
