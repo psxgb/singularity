@@ -19,7 +19,7 @@ def main():
     model.tok_emb = torch.nn.Embedding(vocab_size, cfg["model"]["d_model"])
     model.head = torch.nn.Linear(cfg["model"]["d_model"], vocab_size, bias = False)
     parameters = filter(lambda p: p.requires_grad, model.parameters())
-    device = torch.device("mps")
+    device = torch.device("cuda")
     model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr = cfg["training"]["learning_rate"])
     model_engine = model
@@ -42,8 +42,9 @@ def main():
             loss.backward()
             optimizer.step()
             step += 1
-            print(f"Step {step} Loss {loss.item():.4f}")
-            if step >= 3:
+            if step % 10000 == 0:
+                print(f"Step {step} Loss {loss.item():.4f}")
+            if step >= total_step * data["weight"]:
                 break
 
     #save model

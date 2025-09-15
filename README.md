@@ -1,3 +1,2 @@
 # singularity
-LLM model pre-train
-run: python train.py in your cmd terminal
+run: deepspeed --num_gpus=1 train.py in your cmd terminal
