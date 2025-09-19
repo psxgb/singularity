@@ -7,6 +7,7 @@ from transformers import AutoTokenizer
 from torch.utils.data import DataLoader, IterableDataset
 from dataclasses import dataclass
 import itertools
+from pathlib import Path
 
 #load config
 def get_configs():
@@ -106,3 +107,16 @@ def get_model_config(cfg, vocab_size):
         use_rope=cfg["model"]['use_rope'],
     )
     return model_config
+
+#save model
+def save_model(cfg, model, optimizer, total_step, loss, tokenizer):
+    save_dir = Path(cfg["training"]['save_dir'])
+    save_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint = {
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "step": total_step,
+        "loss": loss.item()
+    }
+    torch.save(checkpoint, save_dir / f"{cfg['model_name']}.pt")
+    tokenizer.save_pretrained(save_dir)

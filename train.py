@@ -1,6 +1,6 @@
 import deepspeed
 import torch
-from utils import get_configs, set_seed, get_dataset, gpt2_tokenizer, get_model_config
+from utils import get_configs, set_seed, get_dataset, gpt2_tokenizer, get_model_config, save_model
 from model import GPTModel
 from pathlib import Path
 
@@ -32,6 +32,7 @@ def main():
         train_loader = get_dataset(data, tokenizer, cfg["training"]["train_batch_size"], cfg["model"]["max_seq_len"], 
                                    cfg["data"]["min_length"], cfg["data"]["english_only"])
         step = 0
+        cum_loss = 0
         for batch in train_loader:
             input_ids = batch[0].to(device)
             outputs = model_engine(input_ids)
@@ -42,22 +43,17 @@ def main():
             loss.backward()
             optimizer.step()
             step += 1
+            cum_loss += loss.item() / 10000
             if step % 10000 == 0:
-                print(f"Step {step} Loss {loss.item():.4f}")
-            if step >= total_step * data["weight"]:
+                print(f"Step {step} Loss {cum_loss:.4f}")
+                cum_loss = 0
+                save_model(cfg, model, optimizer, step, loss, tokenizer)
+            if step >= total_step * data["weight"] or step > 2:
+                save_model(cfg, model, optimizer, step, loss, tokenizer)
                 break
 
     #save model
-    save_dir = Path(cfg["training"]['save_dir'])
-    save_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint = {
-        "model_state_dict": model.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict(),
-        "step": total_step,
-        "loss": loss.item()
-    }
-    torch.save(checkpoint, save_dir / f"{cfg['model_name']}.pt")
-    tokenizer.save_pretrained(save_dir)
+    save_model(cfg, model, optimizer, total_step, loss, tokenizer)
 
 
 if __name__ == "__main__":
