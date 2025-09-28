@@ -51,13 +51,13 @@ def main():
 
     #parameters
     batch_size = 16
-    max_seq_len = 256
-    n_layer = 3
+    max_seq_len = 512
+    n_layer = 6
     n_head = 8
-    d_model = 256
-    d_ff = 256
-    learning_rate = 1e-4
-    n_epochs = 1
+    d_model = 512
+    d_ff = 2048
+    learning_rate = 2e-4
+    n_epochs = 2
 
     #tokenizer and data
     train_dataset = get_dataset("train")
@@ -126,14 +126,16 @@ def main():
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-            if step % 100 == 0:
-                print(f"Epoch {epoch} Step {step} Loss {loss.item()}")
+            if step % 1000 == 0:
+                #print(f"Epoch {epoch} Step {step} Loss {loss.item()}")
+                print(f"Epoch {epoch} Step {step}")
+                eval_model = model_engine if use_deepspeed else model
+                evaluate(eval_model, tokenizer.pad_token_id, device, max_seq_len, batch_size)
 
     #evaluation
     print("Training done. Evaluating on validation set...")
     eval_model = model_engine if use_deepspeed else model
-    pad_token_id = tokenizer.pad_token_id
-    evaluate(eval_model, pad_token_id, device, max_seq_len, batch_size)
+    evaluate(eval_model, tokenizer.pad_token_id, device, max_seq_len, batch_size)
 
     # Save model and tokenizer
     save_dir = "saved_model"
